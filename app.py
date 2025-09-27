@@ -20,12 +20,12 @@ CSV_FILE = "reservations.csv"
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, mode="w", newline="") as file:
         writer = csv.writer(file)
-        writer.writerow(["name", "contact_info", "guests", "date", "time"])
+        writer.writerow(["name", "contact", "guests", "date", "time"])
 
 # Pydantic model for reservation input
 class Reservation(BaseModel):
     name: str
-    contact_info: str
+    contact: str
     guests: int
     date: str  # Format: YYYY-MM-DD
     time: str  # Format: HH:MM (24-hour)
