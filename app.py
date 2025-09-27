@@ -54,7 +54,8 @@ class Booking(BaseModel):
     time: str  # HH:MM
 
 class Conversation(BaseModel):
-    customer_id: int
+    #customer_id: int
+    conversation_id: str
     category: str
     intent: str
     transcript: str
@@ -189,13 +190,14 @@ def add_booking(booking: Booking):
 @app.post("/conversation")
 def add_conversation(conversation: Conversation):
     # Check if customer exists
-    customer_check = supabase.table("customers").select("*").eq("id", conversation.customer_id).execute()
-    if not customer_check.data or len(customer_check.data) == 0:
-        raise HTTPException(status_code=404, detail="Customer not found")
+    # customer_check = supabase.table("customers").select("*").eq("id", conversation.customer_id).execute()
+    # if not customer_check.data or len(customer_check.data) == 0:
+    #     raise HTTPException(status_code=404, detail="Customer not found")
     
     # Insert conversation
     response = supabase.table("conversations").insert({
-        "customer_id": conversation.customer_id,
+        #"customer_id": conversation.customer_id,
+        "conversation_id": conversation.conversation_id,
         "category": conversation.category,
         "intent": conversation.intent,
         "transcript": conversation.transcript,
@@ -214,8 +216,8 @@ def add_conversation(conversation: Conversation):
 def get_conversation(customer_id: int = Query(None), conversation_id: int = Query(None)):
     query = supabase.table("conversations").select("*")
 
-    if customer_id:
-        query = query.eq("customer_id", customer_id)
+    # if customer_id:
+    #     query = query.eq("customer_id", customer_id)
     if conversation_id:
         query = query.eq("conversation_id", conversation_id)
     
