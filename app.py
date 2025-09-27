@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, BackgroundTasks
 from pydantic import BaseModel, Field
 import csv
 from datetime import datetime
@@ -78,8 +78,42 @@ def _remove_last_csv_row():
         writer.writerows(rows)
 
 
+def process_reservation_in_background(reservation):
+    # 1) Create Customer
+    try:
+        customer_payload = Customer(
+            name=reservation.name,
+            contact=reservation.contact,
+            guests=reservation.guests
+        )
+        resp = add_customer(customer_payload)  # returns APIResponse
+        if resp.error:
+            print(f"[Background] Failed to add customer: {resp.error}")
+        else:
+            print(f"[Background] Customer added: {resp.data}")
+    except Exception as e:
+        print(f"[Background] Exception adding customer: {e}")
+
+    # 2) Create Booking
+    try:
+        booking_payload = Booking(
+            name=reservation.name,
+            contact=reservation.contact,
+            date=reservation.date,
+            time=reservation.time
+        )
+        resp = add_booking(booking_payload)
+        if resp.error:
+            print(f"[Background] Failed to add booking: {resp.error}")
+        else:
+            print(f"[Background] Booking added: {resp.data}")
+    except Exception as e:
+        print(f"[Background] Exception adding booking: {e}")
+
+
+
 @app.post("/reservation")
-def add_reservation(reservation: Reservation):
+def add_reservation(reservation: Reservation, background_tasks: BackgroundTasks):
     # 1) Check availability
     if not is_available(reservation.date, reservation.time):
         return {"success": False, "message": "Slot not available"}
@@ -98,76 +132,20 @@ def add_reservation(reservation: Reservation):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to write reservation CSV: {e}")
 
-    # 3) Create Customer by calling internal endpoint function
-    created_customer = None
-    try:
-        customer_payload = Customer(
-            name=reservation.name,
-            contact=reservation.contact,
-            guests=reservation.guests
-        )
-        # call the route function directly
-        cust_resp = add_customer(customer_payload)
-        created_customer = cust_resp  # usually {"success": True, "message": "Customer added"}
-    except HTTPException as he:
-        # rollback CSV and bubble up the error
-        _remove_last_csv_row()
-        raise he
-    except Exception as e:
-        _remove_last_csv_row()
-        raise HTTPException(status_code=500, detail=f"Failed to add customer (internal call): {e}")
+    # 3) Launch background task for customer + booking
+    background_tasks.add_task(process_reservation_in_background, reservation)
 
-    # 4) Create Booking by calling internal endpoint function
-    created_booking = None
-    try:
-        booking_payload = Booking(
-            name=reservation.name,
-            contact=reservation.contact,
-            date=reservation.date,
-            time=reservation.time
-        )
-        book_resp = add_booking(booking_payload)
-        created_booking = book_resp
-    except HTTPException as he:
-        # Booking creation failed. Try to cleanup customer in Supabase (best-effort), then rollback CSV
-        try:
-            # Attempt to find the recently-created customer by contact and delete it.
-            # This is best-effort: it assumes 'contact' is a usable identifier.
-            find_resp = supabase.table("customers").select("*").eq("contact", reservation.contact).execute()
-            if find_resp.status_code == 200 and find_resp.data:
-                # If there are multiple, try to pick the most recent by created_at or id if available.
-                candidate = find_resp.data[-1]  # fallback: last in list
-                cust_id = candidate.get("id") or candidate.get("customer_id")
-                if cust_id:
-                    supabase.table("customers").delete().eq("id", cust_id).execute()
-                else:
-                    # fallback: delete by exact match on name+contact+guests
-                    supabase.table("customers").delete().eq("contact", reservation.contact).eq("name", reservation.name).execute()
-        except Exception:
-            # don't mask the original error — this cleanup is best-effort
-            pass
-
-        _remove_last_csv_row()
-        # re-raise the original HTTPException to return meaningful status to client
-        raise he
-    except Exception as e:
-        # other errors
-        _remove_last_csv_row()
-        raise HTTPException(status_code=500, detail=f"Failed to add booking (internal call): {e}")
-
-    # 5) Success — return aggregated info
+    # 4) Return immediately
     return {
         "success": True,
-        "message": "Reservation, customer and booking added successfully",
+        "message": "Reservation added successfully. Customer and booking processing will run in background.",
         "reservation": {
             "name": reservation.name,
             "contact": reservation.contact,
             "guests": reservation.guests,
             "date": reservation.date,
             "time": reservation.time
-        },
-        "customer_response": created_customer,
-        "booking_response": created_booking
+        }
     }
 
 
